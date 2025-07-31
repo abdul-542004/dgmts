@@ -2,13 +2,14 @@ import React, { useState, useEffect } from 'react';
 import { 
   Table, TableBody, TableCell, TableContainer, TableHead, TableRow, 
   Paper, Button, Box, Typography, Dialog, DialogTitle, DialogContent,
-  DialogActions, Checkbox, FormControlLabel, FormGroup, TextField
+  DialogActions, Checkbox, FormControlLabel, FormGroup, TextField,
+  Autocomplete, Chip
 } from '@mui/material';
 import { Edit as EditIcon, Delete as DeleteIcon, Person as PersonIcon } from '@mui/icons-material';
 import { supabase } from '../supabase';
 import HeaNavLogo from '../components/HeaNavLogo';
 import MainContentWrapper from '../components/MainContentWrapper';
-import { toast } from 'react-toastify';
+import { toast, ToastContainer } from 'react-toastify';
 import "react-toastify/dist/ReactToastify.css";
 import { useAdminContext } from '../context/AdminContext';
 
@@ -25,6 +26,11 @@ type User = {
   download_graph?: boolean;
   view_data?: boolean;
   download_data?: boolean;
+};
+
+type Project = {
+  id: number;
+  name: string;
 };
 
 const Permissions: React.FC = () => {
@@ -54,6 +60,10 @@ const Permissions: React.FC = () => {
     'Phone No': ''
   });
 
+  // Add state for projects
+  const [allProjects, setAllProjects] = useState<Project[]>([]);
+  const [selectedUserProjects, setSelectedUserProjects] = useState<Project[]>([]);
+
   const { isAdmin, userEmail } = useAdminContext();
 
   useEffect(() => {
@@ -73,6 +83,16 @@ const Permissions: React.FC = () => {
         })) || [];
 
         setUsers(usersWithSno);
+        
+        // Fetch all projects for the dropdown
+        const { data: projectsData, error: projectsError } = await supabase
+          .from('Projects')
+          .select('id, name')
+          .order('name', { ascending: true });
+        
+        if (projectsError) throw projectsError;
+        setAllProjects(projectsData || []);
+        
         // Fetch user-project assignments
         const { data: projectUsers, error: puError } = await supabase
           .from('ProjectUsers')
@@ -150,6 +170,14 @@ const Permissions: React.FC = () => {
       Position: user.Position || '',
       'Phone No': user['Phone No'] || ''
     });
+    
+    // Set the currently assigned projects for this user
+    const userProjectNames = userProjects[user.email] || [];
+    const assignedProjects = allProjects.filter(project => 
+      userProjectNames.includes(project.name)
+    );
+    setSelectedUserProjects(assignedProjects);
+    
     setEditUserDialogOpen(true);
   };
 
@@ -164,19 +192,60 @@ const Permissions: React.FC = () => {
     if (!currentUser) return;
     
     try {
-      const { error } = await supabase
+      // Update user details
+      const { error: userError } = await supabase
         .from('users')
         .update(userDetails)
         .eq('id', currentUser.id);
 
-      if (error) throw error;
+      if (userError) throw userError;
 
+      // Check if project assignments have changed
+      const currentUserProjectNames = userProjects[currentUser.email] || [];
+      const newUserProjectNames = selectedUserProjects.map(p => p.name);
+      
+      // Sort both arrays to compare properly
+      const currentSorted = [...currentUserProjectNames].sort();
+      const newSorted = [...newUserProjectNames].sort();
+      const projectsChanged = JSON.stringify(currentSorted) !== JSON.stringify(newSorted);
+
+      // Only update project assignments if they've changed
+      if (projectsChanged) {
+        // First, delete existing project assignments for this user
+        const { error: deleteError } = await supabase
+          .from('ProjectUsers')
+          .delete()
+          .eq('user_email', userDetails.email);
+
+        if (deleteError) throw deleteError;
+
+        // Then, add new project assignments
+        if (selectedUserProjects.length > 0) {
+          const projectInserts = selectedUserProjects.map(project => ({
+            project_id: project.id,
+            user_email: userDetails.email
+          }));
+
+          const { error: insertError } = await supabase
+            .from('ProjectUsers')
+            .insert(projectInserts);
+
+          if (insertError) throw insertError;
+        }
+
+        // Update userProjects state only if projects changed
+        const updatedUserProjects = { ...userProjects };
+        updatedUserProjects[userDetails.email] = selectedUserProjects.map(p => p.name);
+        setUserProjects(updatedUserProjects);
+      }
+
+      // Update local state
       setUsers(users.map(user => 
         user.id === currentUser.id ? { ...user, ...userDetails } : user
       ));
 
       setEditUserDialogOpen(false);
-      toast.success('User details updated successfully for ' + currentUser.username);
+      toast.success(`User details updated successfully for ${currentUser.username}`);
     } catch (error) {
       console.error('Error updating user details:', error);
       const errorMessage = error instanceof Error ? error.message : String(error);
@@ -188,6 +257,17 @@ const Permissions: React.FC = () => {
     <>
       <HeaNavLogo />
       <MainContentWrapper>
+        <ToastContainer 
+          position="top-right"
+          autoClose={3000}
+          hideProgressBar={false}
+          newestOnTop={false}
+          closeOnClick
+          rtl={false}
+          pauseOnFocusLoss
+          draggable
+          pauseOnHover
+        />
         <Box sx={{ p: 3 }}>
           <Typography variant="h4" gutterBottom sx={{ mb: 3 }}>
             User Permissions
@@ -356,7 +436,7 @@ const Permissions: React.FC = () => {
         </Dialog>
 
         {/* Edit User Details Dialog */}
-        <Dialog open={editUserDialogOpen} onClose={() => setEditUserDialogOpen(false)} maxWidth="sm" fullWidth>
+        <Dialog open={editUserDialogOpen} onClose={() => setEditUserDialogOpen(false)} maxWidth="md" fullWidth>
           <DialogTitle>Edit User Details</DialogTitle>
           <DialogContent>
             {currentUser && (
@@ -407,6 +487,43 @@ const Permissions: React.FC = () => {
                   onChange={handleUserDetailChange}
                   margin="normal"
                 />
+                
+                {/* Project Assignment Section */}
+                <Typography variant="h6" sx={{ mt: 3, mb: 2 }}>
+                  Assign Projects
+                </Typography>
+                <Autocomplete
+                  multiple
+                  options={allProjects}
+                  getOptionLabel={(option) => option.name}
+                  value={selectedUserProjects}
+                  onChange={(_event, newValue) => setSelectedUserProjects(newValue)}
+                  renderInput={(params) => (
+                    <TextField
+                      {...params}
+                      label="Select Projects"
+                      placeholder="Choose projects to assign to this user"
+                    />
+                  )}
+                  renderTags={(value, getTagProps) =>
+                    value.map((option, index) => (
+                      <Chip
+                        variant="outlined"
+                        label={option.name}
+                        {...getTagProps({ index })}
+                        key={option.id}
+                      />
+                    ))
+                  }
+                  renderOption={(props, option) => (
+                    <li {...props} key={option.id}>
+                      {option.name}
+                    </li>
+                  )}
+                />
+                <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
+                  Selected projects: {selectedUserProjects.length} project(s)
+                </Typography>
               </Box>
             )}
           </DialogContent>
