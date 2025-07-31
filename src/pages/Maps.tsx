@@ -20,7 +20,7 @@ interface Project {
   name: string;
 }
 
-const SUPPORTED_PROJECTS = [24637, 20151]; // Long Bridge North, DGMTS Testing
+const SUPPORTED_PROJECTS = [24637, 20151, 24429]; // Long Bridge North, DGMTS Testing, ANC DAR-BC
 
 const Maps: React.FC = () => {
   const navigate = useNavigate();
@@ -74,6 +74,9 @@ const Maps: React.FC = () => {
           break;
         case 20151: // DGMTS Testing
           navigate('/seismograph-map');
+          break;
+        case 24429: // ANC DAR-BC
+          navigate('/anc-dar-bc-map');
           break;
         default:
           break;

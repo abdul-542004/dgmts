@@ -40,6 +40,7 @@ import Maps from "../pages/Maps";
 import DataSummary from "../pages/DataSummary";
 import DgmtsDataSummary from "../pages/DgmtsDataSummary";
 import LongBridgeMap from "../pages/LongBridgeMap";
+import AncDarBcMap from "../pages/AncDarBcMap";
 import Tiltmeter from "../pages/Tiltmeter";
 import Tiltmeter30846 from "../pages/Tiltmeter30846";
 import Tiltmeter142939 from "../pages/Tiltmeter142939";
@@ -97,6 +98,7 @@ const AppRoutes: React.FC = () => {
         <Route path="/vibration-data-table" element={<VibrationDataTablePage />} />
         <Route path="/seismograph-map" element={<DeviceMap/>} />
         <Route path="/long-bridge-map" element={<LongBridgeMap />} />
+        <Route path="/anc-dar-bc-map" element={<AncDarBcMap />} />
         <Route path="/maps" element={<Maps />} />
         <Route path="/edit-project" element={<EditProject />} />
       </Route>

@@ -20,7 +20,7 @@ interface Project {
   name: string;
 }
 
-const SUPPORTED_PROJECTS = [24637, 20151]; // Long Bridge North, DGMTS Testing
+const SUPPORTED_PROJECTS = [24637, 20151, 24429]; // Long Bridge North, DGMTS Testing, ANC DAR-BC
 
 const DataSummary: React.FC = () => {
   const navigate = useNavigate();
@@ -74,6 +74,9 @@ const DataSummary: React.FC = () => {
           break;
         case 20151: // DGMTS Testing
           navigate('/DGMTS-data-summary');
+          break;
+        case 24429: // ANC DAR-BC
+          toast.info('Data summary for ANC DAR-BC coming soon');
           break;
         default:
           break;
