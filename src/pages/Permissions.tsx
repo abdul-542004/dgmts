@@ -192,13 +192,24 @@ const Permissions: React.FC = () => {
     if (!currentUser) return;
     
     try {
-      // Update user details
-      const { error: userError } = await supabase
-        .from('users')
-        .update(userDetails)
-        .eq('id', currentUser.id);
+      // Check if user details have changed
+      const userDetailsChanged = (
+        userDetails.username !== (currentUser.username || '') ||
+        userDetails.email !== (currentUser.email || '') ||
+        userDetails.Company !== (currentUser.Company || '') ||
+        userDetails.Position !== (currentUser.Position || '') ||
+        userDetails['Phone No'] !== (currentUser['Phone No'] || '')
+      );
 
-      if (userError) throw userError;
+      // Only update user details if they've changed
+      if (userDetailsChanged) {
+        const { error: userError } = await supabase
+          .from('users')
+          .update(userDetails)
+          .eq('id', currentUser.id);
+
+        if (userError) throw userError;
+      }
 
       // Check if project assignments have changed
       const currentUserProjectNames = userProjects[currentUser.email] || [];
@@ -239,13 +250,25 @@ const Permissions: React.FC = () => {
         setUserProjects(updatedUserProjects);
       }
 
-      // Update local state
-      setUsers(users.map(user => 
-        user.id === currentUser.id ? { ...user, ...userDetails } : user
-      ));
+      // Update local state only if user details changed
+      if (userDetailsChanged) {
+        setUsers(users.map(user => 
+          user.id === currentUser.id ? { ...user, ...userDetails } : user
+        ));
+      }
 
       setEditUserDialogOpen(false);
-      toast.success(`User details updated successfully for ${currentUser.username}`);
+      
+      // Show appropriate success message based on what was changed
+      if (userDetailsChanged && projectsChanged) {
+        toast.success(`User details and project assignments updated successfully for ${currentUser.username}`);
+      } else if (userDetailsChanged) {
+        toast.success(`User details updated successfully for ${currentUser.username}`);
+      } else if (projectsChanged) {
+        toast.success(`Project assignments updated successfully for ${currentUser.username}`);
+      } else {
+        toast.info(`No changes made for ${currentUser.username}`);
+      }
     } catch (error) {
       console.error('Error updating user details:', error);
       const errorMessage = error instanceof Error ? error.message : String(error);
