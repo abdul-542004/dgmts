@@ -2,9 +2,9 @@ import React, { useState, useEffect } from 'react';
 import { 
   Table, TableBody, TableCell, TableContainer, TableHead, TableRow, 
   Paper, Button, Box, Typography, Dialog, DialogTitle, DialogContent,
-  DialogActions, Checkbox, FormControlLabel, FormGroup
+  DialogActions, Checkbox, FormControlLabel, FormGroup, TextField
 } from '@mui/material';
-import { Edit as EditIcon, Delete as DeleteIcon } from '@mui/icons-material';
+import { Edit as EditIcon, Delete as DeleteIcon, Person as PersonIcon } from '@mui/icons-material';
 import { supabase } from '../supabase';
 import HeaNavLogo from '../components/HeaNavLogo';
 import MainContentWrapper from '../components/MainContentWrapper';
@@ -43,6 +43,16 @@ const Permissions: React.FC = () => {
   const [userProjects, setUserProjects] = useState<{ [email: string]: string[] }>({});
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [userToDelete, setUserToDelete] = useState<User | null>(null);
+  
+  // Add state for editing user details
+  const [editUserDialogOpen, setEditUserDialogOpen] = useState(false);
+  const [userDetails, setUserDetails] = useState({
+    username: '',
+    email: '',
+    Company: '',
+    Position: '',
+    'Phone No': ''
+  });
 
   const { isAdmin, userEmail } = useAdminContext();
 
@@ -70,10 +80,12 @@ const Permissions: React.FC = () => {
         if (puError) throw puError;
         // Map user_email to array of project names
         const projMap: { [email: string]: string[] } = {};
-        (projectUsers || []).forEach((pu: any) => {
+        (projectUsers || []).forEach((pu) => {
           if (!pu.user_email) return;
           if (!projMap[pu.user_email]) projMap[pu.user_email] = [];
-          if (pu.Projects && pu.Projects.name) projMap[pu.user_email].push(pu.Projects.name);
+          if (pu.Projects && typeof pu.Projects === 'object' && 'name' in pu.Projects) {
+            projMap[pu.user_email].push(String(pu.Projects.name));
+          }
         });
         setUserProjects(projMap);
       } catch (error) {
@@ -126,7 +138,49 @@ const Permissions: React.FC = () => {
       console.error('Error updating permissions:', error);
       const errorMessage = error instanceof Error ? error.message : String(error);
       toast.error('Error updating permissions: ' + errorMessage);
+    }
+  };
 
+  const handleEditUserClick = (user: User) => {
+    setCurrentUser(user);
+    setUserDetails({
+      username: user.username || '',
+      email: user.email || '',
+      Company: user.Company || '',
+      Position: user.Position || '',
+      'Phone No': user['Phone No'] || ''
+    });
+    setEditUserDialogOpen(true);
+  };
+
+  const handleUserDetailChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setUserDetails({
+      ...userDetails,
+      [e.target.name]: e.target.value
+    });
+  };
+
+  const handleSaveUserDetails = async () => {
+    if (!currentUser) return;
+    
+    try {
+      const { error } = await supabase
+        .from('users')
+        .update(userDetails)
+        .eq('id', currentUser.id);
+
+      if (error) throw error;
+
+      setUsers(users.map(user => 
+        user.id === currentUser.id ? { ...user, ...userDetails } : user
+      ));
+
+      setEditUserDialogOpen(false);
+      toast.success('User details updated successfully for ' + currentUser.username);
+    } catch (error) {
+      console.error('Error updating user details:', error);
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      toast.error('Error updating user details: ' + errorMessage);
     }
   };
 
@@ -150,18 +204,19 @@ const Permissions: React.FC = () => {
                   <TableCell sx={{ fontWeight: 'bold', border: '1px solid black' }}>Position</TableCell>
                   <TableCell sx={{ fontWeight: 'bold', border: '1px solid black' }}>Phone No</TableCell>
                   <TableCell sx={{ fontWeight: 'bold', border: '1px solid black' }}>Projects</TableCell>
-                  <TableCell sx={{ fontWeight: 'bold', border: '1px solid black' }}>Permissions</TableCell>
-                  <TableCell sx={{ fontWeight: 'bold', border: '1px solid black' }}>Actions</TableCell>
+                  <TableCell sx={{ fontWeight: 'bold', border: '1px solid black' }}>Edit User</TableCell>
+                  <TableCell sx={{ fontWeight: 'bold', border: '1px solid black' }}>Edit Permissions</TableCell>
+                  <TableCell sx={{ fontWeight: 'bold', border: '1px solid black' }}>Delete</TableCell>
                 </TableRow>
               </TableHead>
               <TableBody>
                 {loading ? (
                   <TableRow>
-                    <TableCell colSpan={9} align="center">Loading users...</TableCell>
+                    <TableCell colSpan={10} align="center">Loading users...</TableCell>
                   </TableRow>
                 ) : users.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={9} align="center">No users found</TableCell>
+                    <TableCell colSpan={10} align="center">No users found</TableCell>
                   </TableRow>
                 ) : (
                   users.map((user) => (
@@ -174,6 +229,21 @@ const Permissions: React.FC = () => {
                       <TableCell sx={{ border: '1px solid black' }}>{user['Phone No'] || '-'}</TableCell>
                       <TableCell sx={{ border: '1px solid black' }}>
                         {(user.email === userEmail && isAdmin) || user.username === 'admin' || user.email === 'admin' ? 'All' : (userProjects[user.email] || []).join(', ') || '-'}
+                      </TableCell>
+                      <TableCell sx={{ border: '1px solid black' }}>
+                        <Button
+                          variant="contained"
+                          color="secondary"
+                          onClick={() => handleEditUserClick(user)}
+                          sx={{ 
+                            py: 1, 
+                            fontSize: 14,
+                            minWidth: 'auto',
+                            px: 1
+                          }}
+                        >
+                            <PersonIcon />
+                        </Button>
                       </TableCell>
                       <TableCell sx={{ border: '1px solid black' }}>
                         <Button
@@ -280,6 +350,69 @@ const Permissions: React.FC = () => {
           <DialogActions>
             <Button onClick={() => setEditDialogOpen(false)}>Cancel</Button>
             <Button onClick={handleSaveChanges} variant="contained" color="primary">
+              Save Changes
+            </Button>
+          </DialogActions>
+        </Dialog>
+
+        {/* Edit User Details Dialog */}
+        <Dialog open={editUserDialogOpen} onClose={() => setEditUserDialogOpen(false)} maxWidth="sm" fullWidth>
+          <DialogTitle>Edit User Details</DialogTitle>
+          <DialogContent>
+            {currentUser && (
+              <Box sx={{ p: 2 }}>
+                <Typography variant="h6" gutterBottom>
+                  Editing: {currentUser.username} ({currentUser.email})
+                </Typography>
+                <TextField
+                  fullWidth
+                  label="Username"
+                  name="username"
+                  value={userDetails.username}
+                  onChange={handleUserDetailChange}
+                  margin="normal"
+                  required
+                />
+                <TextField
+                  fullWidth
+                  label="Email"
+                  name="email"
+                  type="email"
+                  value={userDetails.email}
+                  onChange={handleUserDetailChange}
+                  margin="normal"
+                  required
+                />
+                <TextField
+                  fullWidth
+                  label="Company"
+                  name="Company"
+                  value={userDetails.Company}
+                  onChange={handleUserDetailChange}
+                  margin="normal"
+                />
+                <TextField
+                  fullWidth
+                  label="Position"
+                  name="Position"
+                  value={userDetails.Position}
+                  onChange={handleUserDetailChange}
+                  margin="normal"
+                />
+                <TextField
+                  fullWidth
+                  label="Phone Number"
+                  name="Phone No"
+                  value={userDetails['Phone No']}
+                  onChange={handleUserDetailChange}
+                  margin="normal"
+                />
+              </Box>
+            )}
+          </DialogContent>
+          <DialogActions>
+            <Button onClick={() => setEditUserDialogOpen(false)}>Cancel</Button>
+            <Button onClick={handleSaveUserDetails} variant="contained" color="primary">
               Save Changes
             </Button>
           </DialogActions>
