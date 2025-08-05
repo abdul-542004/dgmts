@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import logo from "../assets/logo.jpg"; 
 import {
@@ -27,136 +27,194 @@ import {
   Person as UserIcon,
   VerifiedUser as AdminProfileIcon,
   AccountTree as ProjectIcon,
-  Map as ProjectMapIcon
+  Map as ProjectMapIcon,
+  Assessment as SeismographIcon,
+  RotateLeft as TiltmeterIcon,
+  Timeline as PrismIcon
 } from '@mui/icons-material';
 import { useAdminContext } from '../context/AdminContext';
 import { supabase } from '../supabase';
+import { 
+  SIDEBAR_PROJECT_IDS, 
+  INSTRUMENT_ROUTE_MAP, 
+  INSTRUMENT_ICON_MAP 
+} from '../config/sidebarConfig';
+
+// Configuration: Project IDs you want to show in sidebar
+// Now imported from config file
+
+// Types
+interface DynamicProject {
+  id: number;
+  name: string;
+  instruments: DynamicInstrument[];
+}
+
+interface DynamicInstrument {
+  instrument_id: string;
+  instrument_name: string;
+  route_path: string;
+  icon_type: string;
+}
+
+// Icon mapping function
+const getInstrumentIcon = (iconType: string) => {
+  switch (iconType.toLowerCase()) {
+    case 'seismograph':
+      return SeismographIcon;
+    case 'tiltmeter':
+      return TiltmeterIcon;
+    case 'prism':
+      return PrismIcon;
+    default:
+      return GraphsIcon;
+  }
+};
 
 const NavSidebar: React.FC = () => {
   const theme = useTheme();
   const navigate = useNavigate();
   const [openGraphs, setOpenGraphs] = useState(false);
-  const [openProject, setOpenProject] = useState(false);
-  const [opensecondProject, setOpenSecondProject] = useState(false);
-  const [openThirdProject, setOpenThirdProject] = useState(false);
-  const [hasLongBridgeAccess, setHasLongBridgeAccess] = useState(false);
-  const [hasDgmtsTestingAccess, setHasDgmtsTestingAccess] = useState(false);
-  const [hasAncDarBcAccess, setHasAncDarBcAccess] = useState(false);
-  const [projectNames, setProjectNames] = useState({
-    longBridge: 'Long Bridge North',
-    dgmtsTesting: 'DGMTS Testing',
-    ancDarBc: 'ANC DAR-BC'
-  });
+  const [openProjects, setOpenProjects] = useState<{ [key: number]: boolean }>({});
+  const [dynamicProjects, setDynamicProjects] = useState<DynamicProject[]>([]);
+  const [loading, setLoading] = useState(false);
   const { isAdmin, setIsAdmin, userEmail, permissions } = useAdminContext();
 
-useEffect(() => {
-  const checkProjectAccess = async () => {
+  const fetchProjectsAndInstruments = useCallback(async () => {
     if (!userEmail) return;
+    setLoading(true);
 
     try {
-      // Check access for Long Bridge North (ID: 24637)
-      const { data, error } = await supabase
-        .from('ProjectUsers')
-        .select('*')
-        .eq('user_email', userEmail)
-        .eq('project_id', 24637);
+      // Fetch projects that user has access to from the configured list
+      let accessibleProjectIds: number[] = [];
 
-      setHasLongBridgeAccess(Boolean(isAdmin || (data && data.length > 0)));
-
-      if (error) {
-        console.error('Error checking Long Bridge North access:', error);
+      if (isAdmin) {
+        accessibleProjectIds = SIDEBAR_PROJECT_IDS;
+      } else {
+        // Check user access for each configured project
+        const { data: userProjects, error } = await supabase
+          .from('ProjectUsers')
+          .select('project_id')
+          .eq('user_email', userEmail)
+          .in('project_id', SIDEBAR_PROJECT_IDS);
+        
+        if (error) throw error;
+        accessibleProjectIds = userProjects?.map(up => up.project_id) || [];
       }
-    } catch (err) {
-      console.error('Unexpected error checking Long Bridge North access:', err);
-      setHasLongBridgeAccess(false);
-    }
-  };
 
-  const checkDgmtsTestingAccess = async () => {
-    if (!userEmail) return;
-    try {
-      // Check access for DGMTS Testing (ID: 20151)
-      const { data, error } = await supabase
-        .from('ProjectUsers')
-        .select('*')
-        .eq('user_email', userEmail)
-        .eq('project_id', 20151);
-      
-      setHasDgmtsTestingAccess(Boolean(isAdmin || (data && data.length > 0)));
-      
-      if (error) {
-        console.error('Error checking DGMTS Testing access:', error);
-      }
-    } catch (err) {
-      console.error('Unexpected error checking DGMTS Testing access:', err);
-      setHasDgmtsTestingAccess(false);
-    }
-  };
-
-  const checkAncDarBcAccess = async () => {
-    if (!userEmail) return;
-    try {
-      // Check access for ANC DAR-BC (ID: 24429)
-      const { data, error } = await supabase
-        .from('ProjectUsers')
-        .select('*')
-        .eq('user_email', userEmail)
-        .eq('project_id', 24429);
-      
-      setHasAncDarBcAccess(Boolean(isAdmin || (data && data.length > 0)));
-      
-      if (error) {
-        console.error('Error checking ANC DAR-BC access:', error);
-      }
-    } catch (err) {
-      console.error('Unexpected error checking ANC DAR-BC access:', err);
-      setHasAncDarBcAccess(false);
-    }
-  };
-
-  const fetchProjectNames = async () => {
-    try {
-      const { data, error } = await supabase
-        .from('Projects')
-        .select('id, name')
-        .in('id', [24637, 20151, 24429]);
-      
-      if (error) {
-        console.error('Error fetching project names:', error);
+      if (accessibleProjectIds.length === 0) {
+        setDynamicProjects([]);
         return;
       }
-      
-      if (data) {
-        const names = {
-          longBridge: data.find(p => p.id === 24637)?.name || 'Long Bridge North',
-          dgmtsTesting: data.find(p => p.id === 20151)?.name || 'DGMTS Testing',
-          ancDarBc: data.find(p => p.id === 24429)?.name || 'ANC DAR-BC'
-        };
-        setProjectNames(names);
+
+      // Fetch project details
+      const { data: projects, error: projectsError } = await supabase
+        .from('Projects')
+        .select('id, name')
+        .in('id', accessibleProjectIds);
+
+      if (projectsError) throw projectsError;
+
+      // Fetch instruments for accessible projects with their routes
+      const projectsWithInstruments: DynamicProject[] = [];
+
+      for (const project of projects || []) {
+        const { data: instruments, error: instrumentsError } = await supabase
+          .from('instruments')
+          .select('instrument_id, instrument_name')
+          .eq('project_id', project.id);
+
+        if (instrumentsError) throw instrumentsError;
+
+        const dynamicInstruments: DynamicInstrument[] = (instruments || []).map(instrument => ({
+          instrument_id: instrument.instrument_id,
+          instrument_name: instrument.instrument_name,
+          route_path: getInstrumentRoute(instrument.instrument_id, instrument.instrument_name),
+          icon_type: getInstrumentIconType(instrument.instrument_id, instrument.instrument_name)
+        }));
+
+        projectsWithInstruments.push({
+          id: project.id,
+          name: project.name,
+          instruments: dynamicInstruments
+        });
       }
-    } catch (err) {
-      console.error('Error fetching project names:', err);
+
+      setDynamicProjects(projectsWithInstruments);
+    } catch (error) {
+      console.error('Error fetching projects and instruments:', error);
+    } finally {
+      setLoading(false);
     }
+  }, [userEmail, isAdmin]);
+
+  useEffect(() => {
+    fetchProjectsAndInstruments();
+  }, [fetchProjectsAndInstruments]);
+
+  // Helper function to determine route based on instrument
+  const getInstrumentRoute = (instrumentId: string, instrumentName: string): string => {
+    // Check configured route mapping first
+    if (INSTRUMENT_ROUTE_MAP[instrumentId]) {
+      return INSTRUMENT_ROUTE_MAP[instrumentId];
+    }
+
+    // Handle AMTS track and ref routes for Long Bridge project
+    if (instrumentId.startsWith('AMTS')) {
+      if (instrumentName.toLowerCase().includes('track')) {
+        return '/amts-track-graphs';
+      }
+      if (instrumentName.toLowerCase().includes('ref')) {
+        return '/amts-ref-graphs';
+      }
+      return '/single-prism-with-time';
+    }
+
+    // Default route or based on instrument type
+    if (instrumentName.toLowerCase().includes('seismograph')) {
+      return '/background'; // Default seismograph route
+    }
+    if (instrumentName.toLowerCase().includes('tiltmeter')) {
+      return '/tiltmeter';
+    }
+    if (instrumentName.toLowerCase().includes('prism')) {
+      return '/single-prism-with-time';
+    }
+
+    return '#'; // Fallback for unknown instruments
   };
 
-  checkProjectAccess();
-  checkDgmtsTestingAccess();
-  checkAncDarBcAccess();
-  fetchProjectNames();
-}, [userEmail, isAdmin]);
+  // Helper function to determine icon type
+  const getInstrumentIconType = (instrumentId: string, instrumentName: string): string => {
+    // Check configured icon mapping first
+    for (const [prefix, iconType] of Object.entries(INSTRUMENT_ICON_MAP)) {
+      if (instrumentId.startsWith(prefix)) {
+        return iconType;
+      }
+    }
+
+    // Fallback to name-based detection
+    if (instrumentName.toLowerCase().includes('seismograph')) {
+      return 'seismograph';
+    }
+    if (instrumentName.toLowerCase().includes('tiltmeter')) {
+      return 'tiltmeter';
+    }
+    if (instrumentName.toLowerCase().includes('prism')) {
+      return 'prism';
+    }
+    return 'default';
+  };
 
   const handleGraphsClick = () => {
     setOpenGraphs(!openGraphs);
   };
 
-  const handleProjectClick = () => {
-    setOpenProject(!openProject);
-  };
-  const handleSecondProjectClick = () => {
-    setOpenSecondProject(!opensecondProject);
-  };
-  const handleThirdProjectClick = () => {
-    setOpenThirdProject(!openThirdProject);
+  const handleProjectClick = (projectId: number) => {
+    setOpenProjects(prev => ({
+      ...prev,
+      [projectId]: !prev[projectId]
+    }));
   };
 
   const handleLogout = async () => {
@@ -258,123 +316,44 @@ useEffect(() => {
                     <ListItemText primary="Custom Graphs" />
                   </ListItemButton>
 
-                  {/* Long Bridge North Project Section - only show if has access */}
-                  {(isAdmin || hasLongBridgeAccess) && (
-                    <>
-                      <ListItemButton onClick={handleProjectClick} sx={{ pl: 4 }}>
-                        <ListItemIcon sx={{ color: 'inherit', minWidth: '36px' }}>
-                          <ProjectIcon fontSize="small" />
-                        </ListItemIcon>
-                        <ListItemText primary={projectNames.longBridge} />
-                        {openProject ? <ExpandLess /> : <ExpandMore />}
-                      </ListItemButton>
-                      <Collapse in={openProject} timeout="auto" unmountOnExit>
-                        <List component="div" disablePadding sx={{ bgcolor: '#002366' }}>
-                          <ListItemButton
-                            component={Link}
-                            to="/single-prism-with-time"
-                            sx={{ pl: 4 }}
-                          >
-                            <ListItemText primary="Single Prism" />
-                          </ListItemButton>
-
-                          <ListItemButton
-                            component={Link}
-                            to="/multi-prisms-with-time"
-                            sx={{ pl: 4 }}
-                          >
-                            <ListItemText primary="Multiple Prisms" />
-                          </ListItemButton>
-                          <ListItemButton
-                            component={Link}
-                            to="/amts-track-graphs"
-                            sx={{ pl: 4 }}
-                          >
-                            <ListItemText primary="AMTS Track" />
-                          </ListItemButton>
-                          <ListItemButton
-                            component={Link}
-                            to="/amts-ref-graphs"
-                            sx={{ pl: 4 }}
-                          >
-                            <ListItemText primary="AMTS Ref" />
-                          </ListItemButton>
-                        </List>
-                      </Collapse>
-                    </>
-                  )}
-                  {(isAdmin || hasDgmtsTestingAccess) && (
-                    <>
-                      <ListItemButton onClick={handleSecondProjectClick} sx={{ pl: 4 }}>
-                        <ListItemIcon sx={{ color: 'inherit', minWidth: '36px' }}>
-                          <ProjectIcon fontSize="small" />
-                        </ListItemIcon>
-                        <ListItemText primary={projectNames.dgmtsTesting} />
-                        {opensecondProject ? <ExpandLess /> : <ExpandMore />}
-                      </ListItemButton>
-                      <Collapse in={opensecondProject} timeout="auto" unmountOnExit>
-                        <List component="div" disablePadding sx={{ bgcolor: '#002366' }}>
-                          {/* Remove Seismograph link, keep only Background as Seismograph Data Graphs */}
-                          <ListItemButton
-                            component={Link}
-                            to="/background"
-                            sx={{ pl: 4 }}
-                          >
-                            <ListItemText primary="Seismograph" />
-                          </ListItemButton>
-                        </List>
-                      </Collapse>
-                    </>
-                  )}
-                  {(isAdmin || hasAncDarBcAccess) && (
-                    <>
-                      <ListItemButton onClick={handleThirdProjectClick} sx={{ pl: 4 }}>
-                        <ListItemIcon sx={{ color: 'inherit', minWidth: '36px' }}>
-                          <ProjectIcon fontSize="small" />
-                        </ListItemIcon>
-                        <ListItemText primary={projectNames.ancDarBc} />
-                        {openThirdProject ? <ExpandLess /> : <ExpandMore />}
-                      </ListItemButton>
-                                              <Collapse in={openThirdProject} timeout="auto" unmountOnExit>
+                  {/* Dynamic Projects Section */}
+                  {loading ? (
+                    <ListItemButton sx={{ pl: 4 }}>
+                      <ListItemText primary="Loading projects..." />
+                    </ListItemButton>
+                  ) : (
+                    dynamicProjects.map((project) => (
+                      <React.Fragment key={project.id}>
+                        <ListItemButton onClick={() => handleProjectClick(project.id)} sx={{ pl: 4 }}>
+                          <ListItemIcon sx={{ color: 'inherit', minWidth: '36px' }}>
+                            <ProjectIcon fontSize="small" />
+                          </ListItemIcon>
+                          <ListItemText primary={project.name} />
+                          {openProjects[project.id] ? <ExpandLess /> : <ExpandMore />}
+                        </ListItemButton>
+                        <Collapse in={openProjects[project.id]} timeout="auto" unmountOnExit>
                           <List component="div" disablePadding sx={{ bgcolor: '#002366' }}>
-                            {/* <ListItemButton
-                              // component={Link}
-                              // to="/tiltmeter"
-                              sx={{ pl: 4 }}
-                            >
-                              <ListItemText primary="Tiltmeter" />
-                            </ListItemButton> */}
-                                  <ListItemButton
-        component={Link}
-        to="/anc-seismograph"
-        sx={{ pl: 4 }}
-      >
-        <ListItemText primary="Seismograph" />
-      </ListItemButton>
-      <ListItemButton
-        component={Link}
-        to="/smg3-seismograph"
-        sx={{ pl: 4 }}
-      >
-        <ListItemText primary="Seismograph 2 (SMG-3)" />
-      </ListItemButton>
-                            <ListItemButton
-                              component={Link}
-                              to="/tiltmeter-142939"
-                              sx={{ pl: 4 }}
-                            >
-                              <ListItemText primary="Tiltmeter-Node-142939" />
-                            </ListItemButton>
-                            <ListItemButton
-                              component={Link}
-                              to="/tiltmeter-143969"
-                              sx={{ pl: 4 }}
-                            >
-                              <ListItemText primary="Tiltmeter-Node-143969" />
-                            </ListItemButton>
+                            {project.instruments.map((instrument) => {
+                              const IconComponent = getInstrumentIcon(instrument.icon_type);
+                              return (
+                                <ListItemButton
+                                  key={instrument.instrument_id}
+                                  component={Link}
+                                  to={instrument.route_path}
+                                  sx={{ pl: 6 }}
+                                  disabled={instrument.route_path === '#'}
+                                >
+                                  <ListItemIcon sx={{ color: 'inherit', minWidth: '32px' }}>
+                                    <IconComponent fontSize="small" />
+                                  </ListItemIcon>
+                                  <ListItemText primary={instrument.instrument_name} />
+                                </ListItemButton>
+                              );
+                            })}
                           </List>
                         </Collapse>
-                    </>
+                      </React.Fragment>
+                    ))
                   )}
                 </List>
               </Collapse>
